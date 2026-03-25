@@ -3,6 +3,7 @@
 *.log.*
 node_modules
 
+# Build
 out/
 dist/
 code.js
