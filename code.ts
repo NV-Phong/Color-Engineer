@@ -50,8 +50,22 @@ function changeHueImpl(color: RGB, targetHue: number): RGB {
   return { r: newR, g: newG, b: newB };
 }
 
-function clone(val: any) {
-  return JSON.parse(JSON.stringify(val));
+function fastClone(val: any): any {
+  if (val === null || typeof val !== 'object') return val;
+  if (Array.isArray(val)) {
+    const res = new Array(val.length);
+    for (let i = 0; i < val.length; i++) {
+      res[i] = fastClone(val[i]);
+    }
+    return res;
+  }
+  if (val instanceof Uint8Array) return new Uint8Array(val);
+  
+  const res: any = {};
+  for (const key in val) {
+    res[key] = fastClone(val[key]);
+  }
+  return res;
 }
 
 function getNodesWithColors(selection: readonly SceneNode[]): SceneNode[] {
@@ -104,8 +118,18 @@ if (figma.editorType === 'figma') {
   function analyzeAndSendColors() {
     const allNodes = getNodesWithColors(figma.currentPage.selection);
     const spectrumsMap = new Map<string, {h: number, s: number, l: number}>();
+    const seenColors = new Set<number>(); // Bộ nhớ đệm giúp bỏ qua nhanh các màu trùng lặp
 
     function processColor(c: RGB) {
+      // Mã hóa RGB thành 1 số integer duy nhất để tra cứu siêu tốc (Bitwise)
+      const r = Math.round(c.r * 255);
+      const g = Math.round(c.g * 255);
+      const b = Math.round(c.b * 255);
+      const key = (r << 16) | (g << 8) | b;
+
+      if (seenColors.has(key)) return;
+      seenColors.add(key);
+
       const [h, s, l] = rgbToHsl(c.r, c.g, c.b);
       const spec = getSpectrum(h, s, l);
       if (spec && !spectrumsMap.has(spec)) {
@@ -185,63 +209,102 @@ if (figma.editorType === 'figma') {
       const mode = msg.mode;
       const globalHue = msg.hue;
       const hueMap = msg.hueMap;
+      
+      const colorCache = new Map<number, RGB | null>(); // Bộ nhớ đệm giữ thông tin đổi màu để không phải tính lại
 
       function transformColor(c: RGB): RGB | null {
+        // Dùng Bitwise để tạo key tra cứu cực nhanh
+        const r = Math.round(c.r * 255);
+        const g = Math.round(c.g * 255);
+        const b = Math.round(c.b * 255);
+        const cacheKey = (r << 16) | (g << 8) | b;
+
+        if (colorCache.has(cacheKey)) {
+          return colorCache.get(cacheKey) || null;
+        }
+
+        let result: RGB | null = null;
         if (mode === 'individual') {
           const [h, s, l] = rgbToHsl(c.r, c.g, c.b);
           const spec = getSpectrum(h, s, l);
           if (spec && hueMap[spec] !== undefined) {
-             return changeHueImpl(c, hueMap[spec]);
+             result = changeHueImpl(c, hueMap[spec]);
           }
-          return null;
         } else {
-          return changeHueImpl(c, globalHue);
+          result = changeHueImpl(c, globalHue);
         }
+        
+        colorCache.set(cacheKey, result);
+        return result;
       }
 
       const totalNodes = allNodes.length;
       let count = 0;
+      let lastYieldTime = Date.now();
 
       for (const node of allNodes) {
-        if ('fills' in node && Array.isArray(node.fills)) {
-          const fills = clone(node.fills);
-          let changed = false;
-          for (const fill of fills) {
+        if ('fills' in node && Array.isArray(node.fills) && node.fills.length > 0) {
+          let customFills: any[] | null = null;
+          const fillsOrig = node.fills;
+          
+          for (let i = 0; i < fillsOrig.length; i++) {
+            const fill = fillsOrig[i];
+            
             if (fill.type === 'SOLID') {
               const newC = transformColor(fill.color);
-              if (newC) { fill.color = newC; changed = true; }
+              if (newC) {
+                if (!customFills) customFills = fastClone(fillsOrig);
+                customFills![i].color = newC;
+              }
             } else if (fill.type.startsWith('GRADIENT_')) {
-                for (let i = 0; i < fill.gradientStops.length; i++) {
-                   const c = fill.gradientStops[i].color;
+                let changedGradient = false;
+                let newStops: any[] | null = null;
+                
+                for (let j = 0; j < fill.gradientStops.length; j++) {
+                   const c = fill.gradientStops[j].color;
                    const newC = transformColor({r: c.r, g: c.g, b: c.b});
                    if (newC) { 
-                      fill.gradientStops[i].color = { r: newC.r, g: newC.g, b: newC.b, a: c.a };
-                      changed = true;
+                      if (!newStops) newStops = fastClone(fill.gradientStops);
+                      newStops![j].color = { r: newC.r, g: newC.g, b: newC.b, a: c.a };
+                      changedGradient = true;
                    }
+                }
+                if (changedGradient && newStops) {
+                    if (!customFills) customFills = fastClone(fillsOrig);
+                    customFills![i].gradientStops = newStops;
                 }
             }
           }
-          if (changed) node.fills = fills;
+          if (customFills) node.fills = customFills;
         }
         
-        if ('strokes' in node && Array.isArray(node.strokes)) {
-          const strokes = clone(node.strokes);
-          let changed = false;
-          for (const stroke of strokes) {
+        if ('strokes' in node && Array.isArray(node.strokes) && node.strokes.length > 0) {
+          let customStrokes: any[] | null = null;
+          const strokesOrig = node.strokes;
+          
+          for (let i = 0; i < strokesOrig.length; i++) {
+            const stroke = strokesOrig[i];
+            
             if (stroke.type === 'SOLID') {
               const newC = transformColor(stroke.color);
-              if (newC) { stroke.color = newC; changed = true; }
+              if (newC) {
+                 if (!customStrokes) customStrokes = fastClone(strokesOrig);
+                 customStrokes![i].color = newC;
+              }
             }
           }
-          if (changed) node.strokes = strokes;
+          if (customStrokes) node.strokes = customStrokes;
         }
         
         count++;
-        // Update progress every 10 nodes or on the last node
-        if (count % 10 === 0 || count === totalNodes) {
+        
+        // Yield time-based (~60 fps) to avoid blocking the main thread while preventing artificial slowdowns
+        const now = Date.now();
+        if (now - lastYieldTime > 50 || count === totalNodes) {
           figma.ui.postMessage({ type: 'progress', value: Math.round((count / totalNodes) * 100) });
-          // Yield to UI thread to allow animation to render
-          await new Promise(resolve => setTimeout(resolve, 5));
+          // Dừng lại 1 xíu để UI kịp update thanh tiến trình, sau đó chạy tiếp
+          await new Promise(resolve => setTimeout(resolve, 2));
+          lastYieldTime = Date.now();
         }
       }
 
