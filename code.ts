@@ -3,104 +3,178 @@
 // You can access browser APIs in the <script> tag inside "ui.html" which has a
 // full browser environment (See https://www.figma.com/plugin-docs/how-plugins-run).
 
+// Helper functions defined at the top so they can be reused
+function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  let h = 0, s = 0, l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  return [h * 360, s, l];
+}
+
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  let r, g, b;
+  h /= 360;
+  if (s === 0) {
+    r = g = b = l; // achromatic
+  } else {
+    const hue2rgb = (p: number, q: number, t: number) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1/6) return p + (q - p) * 6 * t;
+      if (t < 1/2) return q;
+      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1/3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1/3);
+  }
+  return [r, g, b];
+}
+
+function changeHueImpl(color: RGB, targetHue: number): RGB {
+  const [h, s, l] = rgbToHsl(color.r, color.g, color.b);
+  const [newR, newG, newB] = hslToRgb(targetHue, s, l);
+  return { r: newR, g: newG, b: newB };
+}
+
+function clone(val: any) {
+  return JSON.parse(JSON.stringify(val));
+}
+
+function getNodesWithColors(selection: readonly SceneNode[]): SceneNode[] {
+  const result: SceneNode[] = [];
+  function traverse(node: SceneNode) {
+    if ('fills' in node || 'strokes' in node) {
+      result.push(node);
+    }
+    if ('children' in node) {
+      for (const child of node.children) {
+        traverse(child);
+      }
+    }
+  }
+  for (const node of selection) {
+    traverse(node);
+  }
+  return result;
+}
+
 // Runs this code if the plugin is run in Figma
 if (figma.editorType === 'figma') {
+  let isIndividualMode = false;
+
+  function getSpectrum(h: number, s: number, l: number): string | null {
+    if (s < 0.05 || l < 0.05 || l > 0.95) return null; // Ignore mostly gray/black/white
+    if (h >= 345 || h < 15) return 'Red';
+    if (h >= 15 && h < 45) return 'Orange';
+    if (h >= 45 && h < 75) return 'Yellow';
+    if (h >= 75 && h < 150) return 'Green';
+    if (h >= 150 && h < 240) return 'Blue';
+    if (h >= 240 && h < 275) return 'Indigo';
+    if (h >= 275 && h < 345) return 'Violet';
+    return null;
+  }
+
+  function getSpectrumBaseHue(name: string): number {
+    switch (name) {
+      case 'Red': return 0;
+      case 'Orange': return 30;
+      case 'Yellow': return 60;
+      case 'Green': return 120;
+      case 'Blue': return 210;
+      case 'Indigo': return 260;
+      case 'Violet': return 300;
+      default: return 0;
+    }
+  }
+
+  function analyzeAndSendColors() {
+    const allNodes = getNodesWithColors(figma.currentPage.selection);
+    const spectrumsMap = new Map<string, {h: number, s: number, l: number}>();
+
+    function processColor(c: RGB) {
+      const [h, s, l] = rgbToHsl(c.r, c.g, c.b);
+      const spec = getSpectrum(h, s, l);
+      if (spec && !spectrumsMap.has(spec)) {
+        spectrumsMap.set(spec, { h: Math.round(h), s, l });
+      }
+    }
+
+    for (const node of allNodes) {
+      if ('fills' in node && Array.isArray(node.fills)) {
+        for (const fill of node.fills) {
+          if (fill.type === 'SOLID') processColor(fill.color);
+          else if (fill.type.startsWith('GRADIENT_')) {
+            for (const stop of fill.gradientStops) processColor(stop.color);
+          }
+        }
+      }
+      if ('strokes' in node && Array.isArray(node.strokes)) {
+        for (const stroke of node.strokes) {
+          if (stroke.type === 'SOLID') processColor(stroke.color);
+        }
+      }
+    }
+
+    const uniqueColors = Array.from(spectrumsMap.entries()).map(([key, val]) => {
+      // Use standard colors for the UI display
+      const baseHue = getSpectrumBaseHue(key);
+      const [r, g, b] = hslToRgb(baseHue, 1, 0.5);
+      return {
+        key: key,
+        r: Math.round(r * 255),
+        g: Math.round(g * 255),
+        b: Math.round(b * 255),
+        h: baseHue,
+        s: 1,
+        l: 0.5
+      };
+    });
+
+    // Sort them by Base Hue order
+    uniqueColors.sort((a, b) => getSpectrumBaseHue(a.key) - getSpectrumBaseHue(b.key));
+
+    figma.ui.postMessage({ type: 'analyzed-colors', colors: uniqueColors });
+  }
+
+  figma.on('selectionchange', () => {
+    if (isIndividualMode) {
+      analyzeAndSendColors();
+    }
+  });
+
   figma.showUI(__html__, { width: 320, height: 260, themeColors: true });
 
   figma.ui.onmessage = async msg => {
     if (msg.type === 'resize') {
-      figma.ui.resize(320, msg.height);
+      // Bounding fix: make sure width is sent back, and allow a flexible max height constraint.
+      figma.ui.resize(320, Math.round(msg.height));
+      return;
+    }
+
+    if (msg.type === 'set-mode') {
+      isIndividualMode = msg.isIndividual;
+      if (isIndividualMode) {
+        analyzeAndSendColors();
+      }
       return;
     }
 
     if (msg.type === 'change-hue') {
-      const targetHue = msg.hue; // Hue between 0 and 360
-
-      const nodes = figma.currentPage.selection;
-      if (nodes.length === 0) {
-        figma.notify('Please select at least one object');
-        figma.ui.postMessage({ type: 'complete' });
-        return;
-      }
-
-      function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
-        const max = Math.max(r, g, b);
-        const min = Math.min(r, g, b);
-        let h = 0, s = 0, l = (max + min) / 2;
-
-        if (max !== min) {
-          const d = max - min;
-          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-          switch (max) {
-            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-            case g: h = (b - r) / d + 2; break;
-            case b: h = (r - g) / d + 4; break;
-          }
-          h /= 6;
-        }
-
-        return [h * 360, s, l];
-      }
-
-      function hslToRgb(h: number, s: number, l: number): [number, number, number] {
-        let r, g, b;
-        h /= 360;
-
-        if (s === 0) {
-          r = g = b = l; // achromatic
-        } else {
-          const hue2rgb = (p: number, q: number, t: number) => {
-            if (t < 0) t += 1;
-            if (t > 1) t -= 1;
-            if (t < 1/6) return p + (q - p) * 6 * t;
-            if (t < 1/2) return q;
-            if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-            return p;
-          };
-
-          const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-          const p = 2 * l - q;
-          r = hue2rgb(p, q, h + 1/3);
-          g = hue2rgb(p, q, h);
-          b = hue2rgb(p, q, h - 1/3);
-        }
-
-        return [r, g, b];
-      }
-
-      function changeHueImpl(color: RGB, targetHue: number): RGB {
-        const [h, s, l] = rgbToHsl(color.r, color.g, color.b);
-        const [newR, newG, newB] = hslToRgb(targetHue, s, l);
-        return { r: newR, g: newG, b: newB };
-      }
-
-      function clone(val: any) {
-        return JSON.parse(JSON.stringify(val));
-      }
-
-      // Helper function to get all descendant nodes that have fills or strokes
-      function getNodesWithColors(selection: readonly SceneNode[]): SceneNode[] {
-        const result: SceneNode[] = [];
-        
-        function traverse(node: SceneNode) {
-          if ('fills' in node || 'strokes' in node) {
-            result.push(node);
-          }
-          if ('children' in node) {
-            for (const child of node.children) {
-              traverse(child);
-            }
-          }
-        }
-
-        for (const node of selection) {
-          traverse(node);
-        }
-
-        return result;
-      }
-
-      const allNodes = getNodesWithColors(nodes);
+      const allNodes = getNodesWithColors(figma.currentPage.selection);
       
       if (allNodes.length === 0) {
         figma.notify('No colorable objects found in selection');
@@ -108,42 +182,58 @@ if (figma.editorType === 'figma') {
         return;
       }
 
+      const mode = msg.mode;
+      const globalHue = msg.hue;
+      const hueMap = msg.hueMap;
+
+      function transformColor(c: RGB): RGB | null {
+        if (mode === 'individual') {
+          const [h, s, l] = rgbToHsl(c.r, c.g, c.b);
+          const spec = getSpectrum(h, s, l);
+          if (spec && hueMap[spec] !== undefined) {
+             return changeHueImpl(c, hueMap[spec]);
+          }
+          return null;
+        } else {
+          return changeHueImpl(c, globalHue);
+        }
+      }
+
       const totalNodes = allNodes.length;
       let count = 0;
 
       for (const node of allNodes) {
-        if ('fills' in node) {
+        if ('fills' in node && Array.isArray(node.fills)) {
           const fills = clone(node.fills);
           let changed = false;
           for (const fill of fills) {
             if (fill.type === 'SOLID') {
-              fill.color = changeHueImpl(fill.color, targetHue);
-              changed = true;
-            } else if (fill.type === 'GRADIENT_LINEAR' || fill.type === 'GRADIENT_RADIAL' || fill.type === 'GRADIENT_ANGULAR' || fill.type === 'GRADIENT_DIAMOND') {
+              const newC = transformColor(fill.color);
+              if (newC) { fill.color = newC; changed = true; }
+            } else if (fill.type.startsWith('GRADIENT_')) {
                 for (let i = 0; i < fill.gradientStops.length; i++) {
                    const c = fill.gradientStops[i].color;
-                   const newC = changeHueImpl({r: c.r, g: c.g, b: c.b}, targetHue);
-                   fill.gradientStops[i].color = { r: newC.r, g: newC.g, b: newC.b, a: c.a };
+                   const newC = transformColor({r: c.r, g: c.g, b: c.b});
+                   if (newC) { 
+                      fill.gradientStops[i].color = { r: newC.r, g: newC.g, b: newC.b, a: c.a };
+                      changed = true;
+                   }
                 }
-                changed = true;
             }
           }
-          if (changed) {
-            node.fills = fills;
-          }
+          if (changed) node.fills = fills;
         }
-        if ('strokes' in node) {
+        
+        if ('strokes' in node && Array.isArray(node.strokes)) {
           const strokes = clone(node.strokes);
           let changed = false;
-           for (const stroke of strokes) {
+          for (const stroke of strokes) {
             if (stroke.type === 'SOLID') {
-              stroke.color = changeHueImpl(stroke.color, targetHue);
-              changed = true;
+              const newC = transformColor(stroke.color);
+              if (newC) { stroke.color = newC; changed = true; }
             }
           }
-          if (changed) {
-            node.strokes = strokes;
-          }
+          if (changed) node.strokes = strokes;
         }
         
         count++;

@@ -2,8 +2,6 @@
 <html>
 <head>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
-    
     :root {
       --background: 0 0% 100%;
       --foreground: 240 10% 3.9%;
@@ -21,6 +19,17 @@
       box-sizing: border-box;
     }
 
+    /* Hide scrollbar for Chrome, Safari and Opera */
+    *::-webkit-scrollbar {
+      display: none;
+    }
+
+    /* Hide scrollbar for IE, Edge and Firefox */
+    * {
+      -ms-overflow-style: none;  /* IE and Edge */
+      scrollbar-width: none;  /* Firefox */
+    }
+
     body {
       font-family: 'Inter', sans-serif;
       margin: 0;
@@ -30,7 +39,7 @@
       display: flex;
       flex-direction: column;
       height: 100vh;
-      overflow-y: hidden;
+      overflow-y: auto;
       font-size: 14px;
       -webkit-font-smoothing: antialiased;
     }
@@ -275,6 +284,71 @@
       border-radius: 9999px;
       transition: width 0.1s ease-out;
     }
+
+    /* Switch CSS */
+    .switch-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 16px;
+      border-bottom: 1px solid hsl(var(--border));
+      margin-bottom: 4px;
+    }
+    .switch-label-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .switch {
+      width: 40px;
+      height: 24px;
+      background-color: hsl(var(--input));
+      border-radius: 9999px;
+      position: relative;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: background-color 0.2s;
+      outline: none;
+    }
+    .switch[aria-checked="true"] {
+      background-color: hsl(var(--primary));
+    }
+    .switch-thumb {
+      width: 20px;
+      height: 20px;
+      background-color: hsl(var(--background));
+      border-radius: 50%;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+      position: absolute;
+      top: 0;
+      left: 0;
+      transition: transform 0.2s;
+    }
+    .switch[aria-checked="true"] .switch-thumb {
+      transform: translateX(16px);
+    }
+    .switch:focus-visible {
+      box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ring));
+    }
+
+    .color-item-row {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 12px 0;
+      border-bottom: 1px solid hsl(var(--border));
+    }
+    .color-item-row:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+    #individual-list {
+      display: flex;
+      flex-direction: column;
+      max-height: 220px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
   </style>
 </head>
 <body>
@@ -296,18 +370,39 @@
   </div>
 
   <div class="card">
-    <div class="label-row">
-      <span>Hue Angle</span>
-      <div class="preview-wrapper">
-        <div class="color-preview" id="color-preview"></div>
-        <div class="input-group">
-          <input type="number" id="hueInput" class="value-display" value="0" min="0" max="360">
-          <span class="degrees-symbol">°</span>
+    <div class="switch-row">
+      <div class="switch-label-group">
+        <span style="font-weight: 500; font-size: 14px;">Individual Colors</span>
+        <span style="font-size: 12px; color: hsl(240 3.8% 46.1%);">Adjust original hues separately</span>
+      </div>
+      <button id="modeSwitch" class="switch" role="switch" aria-checked="false">
+        <span class="switch-thumb"></span>
+      </button>
+    </div>
+
+    <!-- Single Mode -->
+    <div id="single-mode-container" style="display: flex; flex-direction: column; gap: 16px;">
+      <div class="label-row">
+        <span>Target Hue Angle</span>
+        <div class="preview-wrapper">
+          <div class="color-preview" id="single-color-preview"></div>
+          <div class="input-group">
+            <input type="number" id="single-hueInput" class="value-display" value="0" min="0" max="360">
+            <span class="degrees-symbol">°</span>
+          </div>
         </div>
       </div>
+      <div class="slider-wrapper">
+        <input type="range" id="single-hueSlider" class="slider" min="0" max="360" value="0">
+      </div>
     </div>
-    <div class="slider-wrapper">
-      <input type="range" id="hueSlider" class="slider" min="0" max="360" value="0">
+
+    <!-- Individual Mode -->
+    <div id="individual-mode-container" style="display: none; flex-direction: column; gap: 4px;">
+      <div id="empty-state" style="font-size: 13px; color: hsl(240 3.8% 46.1%); text-align: center; padding: 12px 0; display: none;">No color objects found in selection.</div>
+      <div id="individual-list" style="display: flex; flex-direction: column; max-height: 220px; overflow-y: auto; padding-right: 4px;">
+        <!-- Injected via JS -->
+      </div>
     </div>
     
     <div class="progress-container" id="progress-container">
@@ -328,9 +423,19 @@
 </div>
 
   <script>
-    const hueInput = document.getElementById('hueInput');
-    const hueSlider = document.getElementById('hueSlider');
-    const colorPreview = document.getElementById('color-preview');
+    let isIndividualMode = false;
+    let hueMap = {};
+
+    const modeSwitch = document.getElementById('modeSwitch');
+    const singleModeContainer = document.getElementById('single-mode-container');
+    const individualModeContainer = document.getElementById('individual-mode-container');
+    const individualList = document.getElementById('individual-list');
+    const emptyState = document.getElementById('empty-state');
+
+    const singleHueInput = document.getElementById('single-hueInput');
+    const singleHueSlider = document.getElementById('single-hueSlider');
+    const singleColorPreview = document.getElementById('single-color-preview');
+
     const applyBtn = document.getElementById('apply');
     const progressContainer = document.getElementById('progress-container');
     const progressFill = document.getElementById('progress-fill');
@@ -338,38 +443,106 @@
 
     // Auto-resize the UI height to exactly fit contents
     function resizeUI() {
-      // Create a small zero-delay timeout to allow DOM to recalculate bounds 
-      // based on margin/padding before checking clientHeight
       setTimeout(() => {
-        // Use clientHeight of the inner container which accurately models spacing padding
         const container = document.getElementById('main-container');
-        const height = container.getBoundingClientRect().height; 
-        parent.postMessage({ pluginMessage: { type: 'resize', height: height } }, '*');
+        let height = container.getBoundingClientRect().height;
+        // Maximum height allowed by our modal visually before scrolling internally
+        // To avoid it going off-screen on smaller laptops.
+        const maxH = 600;
+        
+        parent.postMessage({ pluginMessage: { type: 'resize', height: Math.min(height, maxH) } }, '*');
       }, 0);
     }
 
-    // Call after load and initial render
     setTimeout(resizeUI, 50);
 
-    function syncHue(value) {
+    modeSwitch.addEventListener('click', () => {
+      isIndividualMode = !isIndividualMode;
+      modeSwitch.setAttribute('aria-checked', isIndividualMode);
+      
+      singleModeContainer.style.display = isIndividualMode ? 'none' : 'flex';
+      individualModeContainer.style.display = isIndividualMode ? 'flex' : 'none';
+      
+      parent.postMessage({ pluginMessage: { type: 'set-mode', isIndividual: isIndividualMode } }, '*');
+      resizeUI();
+    });
+
+    function syncSingleHue(value) {
       let h = Math.max(0, Math.min(360, parseInt(value) || 0));
-      hueInput.value = h;
-      hueSlider.value = h;
-      colorPreview.style.backgroundColor = `hsl(${h}, 100%, 50%)`;
+      singleHueInput.value = h;
+      singleHueSlider.value = h;
+      singleColorPreview.style.backgroundColor = `hsl(${h}, 100%, 50%)`;
     }
 
-    hueInput.addEventListener('input', (e) => syncHue(e.target.value));
-    hueSlider.addEventListener('input', (e) => syncHue(e.target.value));
+    singleHueInput.addEventListener('input', (e) => syncSingleHue(e.target.value));
+    singleHueSlider.addEventListener('input', (e) => syncSingleHue(e.target.value));
+
+    function renderIndividualColors(colors) {
+      individualList.innerHTML = '';
+      hueMap = {};
+
+      if (colors.length === 0) {
+        emptyState.style.display = 'block';
+        individualList.style.display = 'none';
+      } else {
+        emptyState.style.display = 'none';
+        individualList.style.display = 'flex';
+
+        colors.forEach(c => {
+          hueMap[c.key] = c.h;
+          const safeId = "hue_" + c.key.toLowerCase();
+
+          const row = document.createElement('div');
+          row.className = 'color-item-row';
+          row.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <div class="color-preview" id="prev_${safeId}" style="background-color: hsl(${c.h}, ${c.s * 100}%, ${c.l * 100}%)"></div>
+                <div style="font-size: 13px; font-weight: 500;">${c.key}</div>
+              </div>
+              <div class="input-group">
+                <input type="number" class="value-display" value="${c.h}" min="0" max="360" id="in_${safeId}">
+                <span class="degrees-symbol">°</span>
+              </div>
+            </div>
+            <div class="slider-wrapper">
+              <input type="range" class="slider" min="0" max="360" value="${c.h}" id="sl_${safeId}">
+            </div>
+          `;
+          individualList.appendChild(row);
+
+          const inp = document.getElementById(`in_${safeId}`);
+          const sld = document.getElementById(`sl_${safeId}`);
+          const prev = document.getElementById(`prev_${safeId}`);
+
+          function updateSubHue(val) {
+            let h = Math.max(0, Math.min(360, parseInt(val) || 0));
+            inp.value = h;
+            sld.value = h;
+            hueMap[c.key] = h;
+            prev.style.backgroundColor = `hsl(${h}, ${c.s * 100}%, ${c.l * 100}%)`;
+          }
+
+          inp.addEventListener('input', (e) => updateSubHue(e.target.value));
+          sld.addEventListener('input', (e) => updateSubHue(e.target.value));
+        });
+      }
+      resizeUI();
+    }
 
     applyBtn.onclick = () => {
-      const hue = parseInt(hueInput.value, 10);
       applyBtn.disabled = true;
       progressContainer.style.display = 'flex';
       progressFill.style.width = '0%';
       progressPercent.textContent = '0%';
-      resizeUI(); // Resize UI when progress bar appears
-      
-      parent.postMessage({ pluginMessage: { type: 'change-hue', hue } }, '*')
+      resizeUI();
+
+      if (isIndividualMode) {
+        parent.postMessage({ pluginMessage: { type: 'change-hue', mode: 'individual', hueMap: hueMap } }, '*');
+      } else {
+        const hue = parseInt(singleHueInput.value, 10);
+        parent.postMessage({ pluginMessage: { type: 'change-hue', mode: 'single', hue: hue } }, '*');
+      }
     }
 
     document.getElementById('cancel').onclick = () => {
@@ -385,8 +558,10 @@
         setTimeout(() => {
           applyBtn.disabled = false;
           progressContainer.style.display = 'none';
-          resizeUI(); // Resize UI when progress bar goes away
+          resizeUI();
         }, 500);
+      } else if (msg.type === 'analyzed-colors') {
+        renderIndividualColors(msg.colors);
       }
     };
   </script>
