@@ -1,17 +1,395 @@
-<h2>Change Hue</h2>
-<p>Hue (0-360): <input id="hue" type="number" value="0" min="0" max="360"></p>
-<button id="apply">Apply</button>
-<button id="cancel">Cancel</button>
-<script>
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+    
+    :root {
+      --background: 0 0% 100%;
+      --foreground: 240 10% 3.9%;
+      --card: 0 0% 100%;
+      --card-foreground: 240 10% 3.9%;
+      --primary: 240 5.9% 10%;
+      --primary-foreground: 0 0% 98%;
+      --border: 240 5.9% 90%;
+      --input: 240 5.9% 90%;
+      --ring: 240 10% 3.9%;
+      --radius: 0.75rem;
+    }
 
-document.getElementById('apply').onclick = () => {
-  const textbox = document.getElementById('hue');
-  const hue = parseInt(textbox.value, 10);
-  parent.postMessage({ pluginMessage: { type: 'change-hue', hue } }, '*')
-}
+    * {
+      box-sizing: border-box;
+    }
 
-document.getElementById('cancel').onclick = () => {
-  parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*')
-}
+    body {
+      font-family: 'Inter', sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: hsl(var(--background));
+      color: hsl(var(--foreground));
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow-y: hidden;
+      font-size: 14px;
+      -webkit-font-smoothing: antialiased;
+    }
 
-</script>
+    .container {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      margin-bottom: auto;
+    }
+
+    .header-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .header-title-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .header-icon {
+      color: hsl(var(--primary));
+    }
+    
+    .header-icon svg {
+      width: 20px;
+      height: 20px;
+      stroke-width: 2.5;
+    }
+
+    .header-text {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -0.015em;
+      margin: 0;
+    }
+
+    .header-description {
+      font-size: 13px;
+      color: hsl(240 3.8% 46.1%); /* muted foreground */
+      margin: 0;
+    }
+
+    .card {
+      background-color: hsl(var(--card));
+      color: hsl(var(--card-foreground));
+      border: 1px solid hsl(var(--border));
+      border-radius: var(--radius);
+      padding: 16px;
+      box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .label-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 500;
+      font-size: 14px;
+    }
+
+    .preview-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .color-preview {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background-color: hsl(0, 100%, 50%);
+      border: 1px solid rgba(0,0,0,0.1);
+      box-shadow: 0 1px 2px 0 rgba(0,0,0,0.05);
+      transition: background-color 0.1s;
+    }
+
+    .input-group {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .value-display {
+      display: flex;
+      height: 32px;
+      width: 64px;
+      border-radius: calc(var(--radius) - 2px);
+      border: 1px solid hsl(var(--input));
+      background-color: transparent;
+      padding: 4px 8px 4px 8px;
+      font-size: 13px;
+      font-family: inherit;
+      text-align: left;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      outline: none;
+    }
+
+    .value-display:focus-visible {
+      outline: none;
+      border-color: hsl(var(--ring));
+      box-shadow: 0 0 0 1px hsl(var(--ring));
+    }
+    
+    .degrees-symbol {
+      position: absolute;
+      right: 8px;
+      color: hsl(240 3.8% 46.1%);
+      font-size: 13px;
+      pointer-events: none;
+    }
+
+    /* Slider styling simulating shadcn */
+    .slider-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+      width: 100%;
+      touch-action: none;
+      user-select: none;
+    }
+
+    .slider {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 8px;
+      border-radius: 9999px;
+      background: linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);
+      outline: none;
+      margin: 8px 0;
+    }
+
+    .slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: hsl(var(--background));
+      border: 2px solid hsl(var(--primary));
+      box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .slider::-webkit-slider-thumb:hover {
+      transform: scale(1.1);
+    }
+    
+    .slider::-webkit-slider-thumb:active {
+      cursor: grabbing;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      margin-top: auto;
+    }
+
+    button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      white-space: nowrap;
+      border-radius: calc(var(--radius) - 2px);
+      font-size: 13px;
+      font-weight: 500;
+      height: 36px;
+      padding: 0 16px;
+      cursor: pointer;
+      transition: background-color 0.2s, color 0.2s;
+      outline: none;
+      font-family: inherit;
+    }
+
+    button:focus-visible {
+      box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ring));
+    }
+
+    .btn-cancel {
+      background-color: transparent;
+      color: hsl(var(--foreground));
+      border: 1px solid hsl(var(--input));
+      box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    }
+
+    .btn-cancel:hover {
+      background-color: hsl(240 4.8% 95.9%); /* accent */
+      color: hsl(240 5.9% 10%); /* accent foreground */
+    }
+
+    .btn-apply {
+      background-color: hsl(var(--primary));
+      color: hsl(var(--primary-foreground));
+      border: 1px solid transparent;
+      box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    }
+
+    .btn-apply:hover:not(:disabled) {
+      background-color: hsl(var(--primary) / 0.9);
+    }
+    
+    .btn-apply:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .progress-container {
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .progress-info {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: hsl(240 3.8% 46.1%);
+    }
+
+    .progress-track {
+      height: 6px;
+      width: 100%;
+      background-color: hsl(var(--border));
+      border-radius: 9999px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background-color: hsl(var(--primary));
+      border-radius: 9999px;
+      transition: width 0.1s ease-out;
+    }
+  </style>
+</head>
+<body>
+<div class="container" id="main-container">
+  <div class="header-wrapper">
+    <div class="header-title-group">
+      <div class="header-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/>
+          <circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/>
+          <circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/>
+          <circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/>
+          <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>
+        </svg>
+      </div>
+      <h2 class="header-text">Hue Shift</h2>
+    </div>
+    <p class="header-description">Adjust the hue angle for selected objects.</p>
+  </div>
+
+  <div class="card">
+    <div class="label-row">
+      <span>Hue Angle</span>
+      <div class="preview-wrapper">
+        <div class="color-preview" id="color-preview"></div>
+        <div class="input-group">
+          <input type="number" id="hueInput" class="value-display" value="0" min="0" max="360">
+          <span class="degrees-symbol">°</span>
+        </div>
+      </div>
+    </div>
+    <div class="slider-wrapper">
+      <input type="range" id="hueSlider" class="slider" min="0" max="360" value="0">
+    </div>
+    
+    <div class="progress-container" id="progress-container">
+      <div class="progress-info">
+        <span class="progress-label">Applying changes...</span>
+        <span class="progress-percent" id="progress-percent">0%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button id="cancel" class="btn-cancel">Cancel</button>
+    <button id="apply" class="btn-apply">Apply Changes</button>
+  </div>
+</div>
+
+  <script>
+    const hueInput = document.getElementById('hueInput');
+    const hueSlider = document.getElementById('hueSlider');
+    const colorPreview = document.getElementById('color-preview');
+    const applyBtn = document.getElementById('apply');
+    const progressContainer = document.getElementById('progress-container');
+    const progressFill = document.getElementById('progress-fill');
+    const progressPercent = document.getElementById('progress-percent');
+
+    // Auto-resize the UI height to exactly fit contents
+    function resizeUI() {
+      // Create a small zero-delay timeout to allow DOM to recalculate bounds 
+      // based on margin/padding before checking clientHeight
+      setTimeout(() => {
+        // Use clientHeight of the inner container which accurately models spacing padding
+        const container = document.getElementById('main-container');
+        const height = container.getBoundingClientRect().height; 
+        parent.postMessage({ pluginMessage: { type: 'resize', height: height } }, '*');
+      }, 0);
+    }
+
+    // Call after load and initial render
+    setTimeout(resizeUI, 50);
+
+    function syncHue(value) {
+      let h = Math.max(0, Math.min(360, parseInt(value) || 0));
+      hueInput.value = h;
+      hueSlider.value = h;
+      colorPreview.style.backgroundColor = `hsl(${h}, 100%, 50%)`;
+    }
+
+    hueInput.addEventListener('input', (e) => syncHue(e.target.value));
+    hueSlider.addEventListener('input', (e) => syncHue(e.target.value));
+
+    applyBtn.onclick = () => {
+      const hue = parseInt(hueInput.value, 10);
+      applyBtn.disabled = true;
+      progressContainer.style.display = 'flex';
+      progressFill.style.width = '0%';
+      progressPercent.textContent = '0%';
+      resizeUI(); // Resize UI when progress bar appears
+      
+      parent.postMessage({ pluginMessage: { type: 'change-hue', hue } }, '*')
+    }
+
+    document.getElementById('cancel').onclick = () => {
+      parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*')
+    }
+
+    window.onmessage = (event) => {
+      const msg = event.data.pluginMessage;
+      if (msg.type === 'progress') {
+        progressFill.style.width = `${msg.value}%`;
+        progressPercent.textContent = `${msg.value}%`;
+      } else if (msg.type === 'complete') {
+        setTimeout(() => {
+          applyBtn.disabled = false;
+          progressContainer.style.display = 'none';
+          resizeUI(); // Resize UI when progress bar goes away
+        }, 500);
+      }
+    };
+  </script>
+
+</body>
+</html>

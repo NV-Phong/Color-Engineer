@@ -5,15 +5,21 @@
 
 // Runs this code if the plugin is run in Figma
 if (figma.editorType === 'figma') {
-  figma.showUI(__html__, { width: 300, height: 200 });
+  figma.showUI(__html__, { width: 320, height: 260, themeColors: true });
 
-  figma.ui.onmessage = msg => {
+  figma.ui.onmessage = async msg => {
+    if (msg.type === 'resize') {
+      figma.ui.resize(320, msg.height);
+      return;
+    }
+
     if (msg.type === 'change-hue') {
       const targetHue = msg.hue; // Hue between 0 and 360
 
       const nodes = figma.currentPage.selection;
       if (nodes.length === 0) {
         figma.notify('Please select at least one object');
+        figma.ui.postMessage({ type: 'complete' });
         return;
       }
 
@@ -68,7 +74,44 @@ if (figma.editorType === 'figma') {
         return { r: newR, g: newG, b: newB };
       }
 
-      for (const node of nodes) {
+      function clone(val: any) {
+        return JSON.parse(JSON.stringify(val));
+      }
+
+      // Helper function to get all descendant nodes that have fills or strokes
+      function getNodesWithColors(selection: readonly SceneNode[]): SceneNode[] {
+        const result: SceneNode[] = [];
+        
+        function traverse(node: SceneNode) {
+          if ('fills' in node || 'strokes' in node) {
+            result.push(node);
+          }
+          if ('children' in node) {
+            for (const child of node.children) {
+              traverse(child);
+            }
+          }
+        }
+
+        for (const node of selection) {
+          traverse(node);
+        }
+
+        return result;
+      }
+
+      const allNodes = getNodesWithColors(nodes);
+      
+      if (allNodes.length === 0) {
+        figma.notify('No colorable objects found in selection');
+        figma.ui.postMessage({ type: 'complete' });
+        return;
+      }
+
+      const totalNodes = allNodes.length;
+      let count = 0;
+
+      for (const node of allNodes) {
         if ('fills' in node) {
           const fills = clone(node.fills);
           let changed = false;
@@ -102,11 +145,19 @@ if (figma.editorType === 'figma') {
             node.strokes = strokes;
           }
         }
+        
+        count++;
+        // Update progress every 10 nodes or on the last node
+        if (count % 10 === 0 || count === totalNodes) {
+          figma.ui.postMessage({ type: 'progress', value: Math.round((count / totalNodes) * 100) });
+          // Yield to UI thread to allow animation to render
+          await new Promise(resolve => setTimeout(resolve, 5));
+        }
       }
 
-      function clone(val: any) {
-        return JSON.parse(JSON.stringify(val));
-      }
+      figma.notify('Hue change applied!');
+      figma.ui.postMessage({ type: 'complete' });
+
     } else if (msg.type === 'cancel') {
       figma.closePlugin();
     }
