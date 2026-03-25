@@ -1,13 +1,13 @@
-<h2>Shape Creator</h2>
-<p>Count: <input id="count" type="number" value="5"></p>
-<button id="create">Create</button>
+<h2>Change Hue</h2>
+<p>Hue (0-360): <input id="hue" type="number" value="0" min="0" max="360"></p>
+<button id="apply">Apply</button>
 <button id="cancel">Cancel</button>
 <script>
 
-document.getElementById('create').onclick = () => {
-  const textbox = document.getElementById('count');
-  const count = parseInt(textbox.value, 10);
-  parent.postMessage({ pluginMessage: { type: 'create-shapes', count } }, '*')
+document.getElementById('apply').onclick = () => {
+  const textbox = document.getElementById('hue');
+  const hue = parseInt(textbox.value, 10);
+  parent.postMessage({ pluginMessage: { type: 'change-hue', hue } }, '*')
 }
 
 document.getElementById('cancel').onclick = () => {
