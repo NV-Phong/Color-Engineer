@@ -79,7 +79,7 @@ function fastClone(val: any): any {
 function getNodesWithColors(selection: readonly SceneNode[]): SceneNode[] {
    const result: SceneNode[] = [];
    function traverse(node: SceneNode) {
-      if ("fills" in node || "strokes" in node) {
+      if ("fills" in node || "strokes" in node || "effects" in node) {
          result.push(node);
       }
       if ("children" in node) {
@@ -169,6 +169,17 @@ if (figma.editorType === "figma") {
          if ("strokes" in node && Array.isArray(node.strokes)) {
             for (const stroke of node.strokes) {
                if (stroke.type === "SOLID") processColor(stroke.color);
+               else if (stroke.type.startsWith("GRADIENT_")) {
+                  for (const stop of stroke.gradientStops)
+                     processColor(stop.color);
+               }
+            }
+         }
+         if ("effects" in node && Array.isArray(node.effects)) {
+            for (const effect of node.effects) {
+               if (effect.type === "DROP_SHADOW" || effect.type === "INNER_SHADOW") {
+                  processColor(effect.color);
+               }
             }
          }
       }
@@ -333,9 +344,60 @@ if (figma.editorType === "figma") {
                            customStrokes = fastClone(strokesOrig);
                         customStrokes![i].color = newC;
                      }
+                  } else if (stroke.type.startsWith("GRADIENT_")) {
+                     let changedGradient = false;
+                     let newStops: any[] | null = null;
+
+                     for (let j = 0; j < stroke.gradientStops.length; j++) {
+                        const c = stroke.gradientStops[j].color;
+                        const newC = transformColor({ r: c.r, g: c.g, b: c.b });
+                        if (newC) {
+                           if (!newStops)
+                              newStops = fastClone(stroke.gradientStops);
+                           newStops![j].color = {
+                              r: newC.r,
+                              g: newC.g,
+                              b: newC.b,
+                              a: c.a,
+                           };
+                           changedGradient = true;
+                        }
+                     }
+                     if (changedGradient && newStops) {
+                        if (!customStrokes) customStrokes = fastClone(strokesOrig);
+                        customStrokes![i].gradientStops = newStops;
+                     }
                   }
                }
                if (customStrokes) node.strokes = customStrokes;
+            }
+
+            if (
+               "effects" in node &&
+               Array.isArray(node.effects) &&
+               node.effects.length > 0
+            ) {
+               let customEffects: any[] | null = null;
+               const effectsOrig = node.effects;
+
+               for (let i = 0; i < effectsOrig.length; i++) {
+                  const effect = effectsOrig[i];
+
+                  if (effect.type === "DROP_SHADOW" || effect.type === "INNER_SHADOW") {
+                     const newC = transformColor(effect.color);
+                     if (newC) {
+                        if (!customEffects)
+                           customEffects = fastClone(effectsOrig);
+                        customEffects![i].color = {
+                           r: newC.r,
+                           g: newC.g,
+                           b: newC.b,
+                           a: effect.color.a
+                        };
+                     }
+                  }
+               }
+               if (customEffects) node.effects = customEffects;
             }
 
             count++;
