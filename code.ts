@@ -227,6 +227,9 @@ if (figma.editorType === "figma") {
          if (allNodes.length === 0) {
             figma.notify("No colorable objects found in selection");
             figma.ui.postMessage({ type: "complete" });
+            if (isIndividualMode) {
+               analyzeAndSendColors();
+            }
             return;
          }
 
@@ -352,6 +355,11 @@ if (figma.editorType === "figma") {
 
          figma.notify("Hue change applied!");
          figma.ui.postMessage({ type: "complete" });
+
+         // Reload colors if in individual mode
+         if (isIndividualMode) {
+            analyzeAndSendColors();
+         }
       } else if (msg.type === "cancel") {
          figma.closePlugin();
       }
