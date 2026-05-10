@@ -131,7 +131,36 @@ if (figma.editorType === "figma") {
       }
    }
 
-   function analyzeAndSendColors() {
+   const pendingImageJobs = new Map<string, (data: any) => void>();
+
+   function processImageAnalyzeInUI(bytes: Uint8Array): Promise<any[]> {
+      return new Promise((resolve) => {
+         const jobId = Math.random().toString(36).substring(2, 15);
+         pendingImageJobs.set(jobId, resolve);
+         figma.ui.postMessage({
+            type: "analyze-image",
+            jobId,
+            bytes
+         });
+      });
+   }
+
+   function processImageBytesInUI(bytes: Uint8Array, mode: string, hue: number, hueMap: any): Promise<Uint8Array | null> {
+      return new Promise((resolve) => {
+         const jobId = Math.random().toString(36).substring(2, 15);
+         pendingImageJobs.set(jobId, resolve);
+         figma.ui.postMessage({
+            type: "process-image",
+            jobId,
+            bytes,
+            mode,
+            hue,
+            hueMap
+         });
+      });
+   }
+
+   async function analyzeAndSendColors() {
       const allNodes = getNodesWithColors(figma.currentPage.selection);
       const spectrumsMap = new Map<
          string,
@@ -156,6 +185,8 @@ if (figma.editorType === "figma") {
          }
       }
 
+      const imageJobs: Promise<void>[] = [];
+
       for (const node of allNodes) {
          if ("fills" in node) {
             if (Array.isArray(node.fills)) {
@@ -164,6 +195,20 @@ if (figma.editorType === "figma") {
                   else if (fill.type.startsWith("GRADIENT_")) {
                      for (const stop of fill.gradientStops)
                         processColor(stop.color);
+                  } else if (fill.type === "IMAGE" && fill.imageHash) {
+                     const img = figma.getImageByHash(fill.imageHash);
+                     if (img) {
+                        const p = img.getBytesAsync().then(bytes => {
+                           return processImageAnalyzeInUI(bytes).then(specs => {
+                              for (const spec of specs) {
+                                 if (!spectrumsMap.has(spec.key)) {
+                                    spectrumsMap.set(spec.key, spec.val);
+                                 }
+                              }
+                           });
+                        }).catch(() => {});
+                        imageJobs.push(p);
+                     }
                   }
                }
             } else if (node.fills === figma.mixed && "vectorNetwork" in node) {
@@ -176,6 +221,20 @@ if (figma.editorType === "figma") {
                            else if (fill.type.startsWith("GRADIENT_")) {
                               for (const stop of fill.gradientStops)
                                  processColor(stop.color);
+                           } else if (fill.type === "IMAGE" && fill.imageHash) {
+                              const img = figma.getImageByHash(fill.imageHash);
+                              if (img) {
+                                 const p = img.getBytesAsync().then(bytes => {
+                                    return processImageAnalyzeInUI(bytes).then(specs => {
+                                       for (const spec of specs) {
+                                          if (!spectrumsMap.has(spec.key)) {
+                                             spectrumsMap.set(spec.key, spec.val);
+                                          }
+                                       }
+                                    });
+                                 }).catch(() => {});
+                                 imageJobs.push(p);
+                              }
                            }
                         }
                      }
@@ -200,6 +259,8 @@ if (figma.editorType === "figma") {
             }
          }
       }
+
+      await Promise.all(imageJobs);
 
       const uniqueColors = Array.from(spectrumsMap.entries()).map(
          ([key, val]) => {
@@ -238,6 +299,24 @@ if (figma.editorType === "figma") {
       if (msg.type === "resize") {
          // Bounding fix: make sure width is sent back, and allow a flexible max height constraint.
          figma.ui.resize(320, Math.round(msg.height));
+         return;
+      }
+
+      if (msg.type === "analyze-image-done") {
+         const resolve = pendingImageJobs.get(msg.jobId);
+         if (resolve) {
+            resolve(msg.specs || []);
+            pendingImageJobs.delete(msg.jobId);
+         }
+         return;
+      }
+
+      if (msg.type === "process-image-done") {
+         const resolve = pendingImageJobs.get(msg.jobId);
+         if (resolve) {
+            resolve(msg.bytes);
+            pendingImageJobs.delete(msg.jobId);
+         }
          return;
       }
 
@@ -335,6 +414,21 @@ if (figma.editorType === "figma") {
                            if (!customFills) customFills = fastClone(fillsOrig);
                            customFills![i].gradientStops = newStops;
                         }
+                     } else if (fill.type === "IMAGE" && fill.imageHash) {
+                        try {
+                           const img = figma.getImageByHash(fill.imageHash);
+                           if (img) {
+                              const bytesOrig = await img.getBytesAsync();
+                              const newBytes = await processImageBytesInUI(bytesOrig, mode, globalHue, hueMap);
+                              if (newBytes) {
+                                 const newImg = figma.createImage(newBytes);
+                                 if (!customFills) customFills = fastClone(fillsOrig);
+                                 customFills![i].imageHash = newImg.hash;
+                              }
+                           }
+                        } catch (e) {
+                           console.error(e);
+                        }
                      }
                   }
                   if (customFills) node.fills = customFills;
@@ -370,6 +464,21 @@ if (figma.editorType === "figma") {
                                  if (changedGradient && newStops) {
                                     if (!customRegionFills) customRegionFills = fastClone(region.fills);
                                     customRegionFills![i].gradientStops = newStops;
+                                 }
+                              } else if (fill.type === "IMAGE" && fill.imageHash) {
+                                 try {
+                                    const img = figma.getImageByHash(fill.imageHash);
+                                    if (img) {
+                                       const bytesOrig = await img.getBytesAsync();
+                                       const newBytes = await processImageBytesInUI(bytesOrig, mode, globalHue, hueMap);
+                                       if (newBytes) {
+                                          const newImg = figma.createImage(newBytes);
+                                          if (!customRegionFills) customRegionFills = fastClone(region.fills);
+                                          customRegionFills![i].imageHash = newImg.hash;
+                                       }
+                                    }
+                                 } catch (e) {
+                                    console.error(e);
                                  }
                               }
                            }
