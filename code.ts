@@ -157,12 +157,29 @@ if (figma.editorType === "figma") {
       }
 
       for (const node of allNodes) {
-         if ("fills" in node && Array.isArray(node.fills)) {
-            for (const fill of node.fills) {
-               if (fill.type === "SOLID") processColor(fill.color);
-               else if (fill.type.startsWith("GRADIENT_")) {
-                  for (const stop of fill.gradientStops)
-                     processColor(stop.color);
+         if ("fills" in node) {
+            if (Array.isArray(node.fills)) {
+               for (const fill of node.fills) {
+                  if (fill.type === "SOLID") processColor(fill.color);
+                  else if (fill.type.startsWith("GRADIENT_")) {
+                     for (const stop of fill.gradientStops)
+                        processColor(stop.color);
+                  }
+               }
+            } else if (node.fills === figma.mixed && "vectorNetwork" in node) {
+               const vn = (node as any).vectorNetwork;
+               if (vn && vn.regions) {
+                  for (const region of vn.regions) {
+                     if (Array.isArray(region.fills)) {
+                        for (const fill of region.fills) {
+                           if (fill.type === "SOLID") processColor(fill.color);
+                           else if (fill.type.startsWith("GRADIENT_")) {
+                              for (const stop of fill.gradientStops)
+                                 processColor(stop.color);
+                           }
+                        }
+                     }
+                  }
                }
             }
          }
@@ -281,49 +298,102 @@ if (figma.editorType === "figma") {
          let lastYieldTime = Date.now();
 
          for (const node of allNodes) {
-            if (
-               "fills" in node &&
-               Array.isArray(node.fills) &&
-               node.fills.length > 0
-            ) {
-               let customFills: any[] | null = null;
-               const fillsOrig = node.fills;
+            if ("fills" in node) {
+               if (Array.isArray(node.fills) && node.fills.length > 0) {
+                  let customFills: any[] | null = null;
+                  const fillsOrig = node.fills;
 
-               for (let i = 0; i < fillsOrig.length; i++) {
-                  const fill = fillsOrig[i];
+                  for (let i = 0; i < fillsOrig.length; i++) {
+                     const fill = fillsOrig[i];
 
-                  if (fill.type === "SOLID") {
-                     const newC = transformColor(fill.color);
-                     if (newC) {
-                        if (!customFills) customFills = fastClone(fillsOrig);
-                        customFills![i].color = newC;
-                     }
-                  } else if (fill.type.startsWith("GRADIENT_")) {
-                     let changedGradient = false;
-                     let newStops: any[] | null = null;
-
-                     for (let j = 0; j < fill.gradientStops.length; j++) {
-                        const c = fill.gradientStops[j].color;
-                        const newC = transformColor({ r: c.r, g: c.g, b: c.b });
+                     if (fill.type === "SOLID") {
+                        const newC = transformColor(fill.color);
                         if (newC) {
-                           if (!newStops)
-                              newStops = fastClone(fill.gradientStops);
-                           newStops![j].color = {
-                              r: newC.r,
-                              g: newC.g,
-                              b: newC.b,
-                              a: c.a,
-                           };
-                           changedGradient = true;
+                           if (!customFills) customFills = fastClone(fillsOrig);
+                           customFills![i].color = newC;
+                        }
+                     } else if (fill.type.startsWith("GRADIENT_")) {
+                        let changedGradient = false;
+                        let newStops: any[] | null = null;
+
+                        for (let j = 0; j < fill.gradientStops.length; j++) {
+                           const c = fill.gradientStops[j].color;
+                           const newC = transformColor({ r: c.r, g: c.g, b: c.b });
+                           if (newC) {
+                              if (!newStops)
+                                 newStops = fastClone(fill.gradientStops);
+                              newStops![j].color = {
+                                 r: newC.r,
+                                 g: newC.g,
+                                 b: newC.b,
+                                 a: c.a,
+                              };
+                              changedGradient = true;
+                           }
+                        }
+                        if (changedGradient && newStops) {
+                           if (!customFills) customFills = fastClone(fillsOrig);
+                           customFills![i].gradientStops = newStops;
                         }
                      }
-                     if (changedGradient && newStops) {
-                        if (!customFills) customFills = fastClone(fillsOrig);
-                        customFills![i].gradientStops = newStops;
+                  }
+                  if (customFills) node.fills = customFills;
+               } else if (node.fills === figma.mixed && "vectorNetwork" in node) {
+                  const vnOrig = (node as any).vectorNetwork;
+                  if (vnOrig && vnOrig.regions) {
+                     let vnCustom: any = null;
+                     for (let r = 0; r < vnOrig.regions.length; r++) {
+                        const region = vnOrig.regions[r];
+                        if (Array.isArray(region.fills) && region.fills.length > 0) {
+                           let customRegionFills: any[] | null = null;
+
+                           for (let i = 0; i < region.fills.length; i++) {
+                              const fill = region.fills[i];
+                              if (fill.type === "SOLID") {
+                                 const newC = transformColor(fill.color);
+                                 if (newC) {
+                                    if (!customRegionFills) customRegionFills = fastClone(region.fills);
+                                    customRegionFills![i].color = newC;
+                                 }
+                              } else if (fill.type.startsWith("GRADIENT_")) {
+                                 let changedGradient = false;
+                                 let newStops: any[] | null = null;
+                                 for (let j = 0; j < fill.gradientStops.length; j++) {
+                                    const c = fill.gradientStops[j].color;
+                                    const newC = transformColor({ r: c.r, g: c.g, b: c.b });
+                                    if (newC) {
+                                       if (!newStops) newStops = fastClone(fill.gradientStops);
+                                       newStops![j].color = { r: newC.r, g: newC.g, b: newC.b, a: c.a };
+                                       changedGradient = true;
+                                    }
+                                 }
+                                 if (changedGradient && newStops) {
+                                    if (!customRegionFills) customRegionFills = fastClone(region.fills);
+                                    customRegionFills![i].gradientStops = newStops;
+                                 }
+                              }
+                           }
+
+                           if (customRegionFills) {
+                              if (!vnCustom) vnCustom = fastClone(vnOrig);
+                              vnCustom.regions[r].fills = customRegionFills;
+                           }
+                        }
+                     }
+
+                     if (vnCustom) {
+                        try {
+                           if (typeof (node as any).setVectorNetworkAsync === "function") {
+                              await (node as any).setVectorNetworkAsync(vnCustom);
+                           } else {
+                              (node as any).vectorNetwork = vnCustom;
+                           }
+                        } catch (e) {
+                           console.error(e);
+                        }
                      }
                   }
                }
-               if (customFills) node.fills = customFills;
             }
 
             if (
